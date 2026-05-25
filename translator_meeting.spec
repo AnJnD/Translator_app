@@ -4,6 +4,7 @@ import os
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
+is_mac = sys.platform == 'darwin'
 
 a = Analysis(
     ['main.py'],
@@ -47,40 +48,68 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='MeetingTranslator',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,       # no console window
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon='icon.ico' if sys.platform == 'win32' and os.path.exists('icon.ico') else ('icon.icns' if sys.platform == 'darwin' and os.path.exists('icon.icns') else None),
-    version=None,
-)
-
-# macOS: wrap EXE in an .app bundle
-if sys.platform == 'darwin':
-    app = BUNDLE(
+if is_mac:
+    # macOS: onedir mode (required for .app bundle)
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name='MeetingTranslator',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon='icon.icns' if os.path.exists('icon.icns') else None,
+    )
+    coll = COLLECT(
         exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=False,
+        name='MeetingTranslator',
+    )
+    app = BUNDLE(
+        coll,
         name='MeetingTranslator.app',
-        icon='icon.icns',  # Place icon.icns in project root
+        icon='icon.icns' if os.path.exists('icon.icns') else None,
         bundle_identifier='com.meetingtranslator.app',
         info_plist={
             'NSMicrophoneUsageDescription': 'Meeting Translator needs microphone access for speech recognition.',
             'NSHighResolutionCapable': True,
             'CFBundleShortVersionString': '1.0.0',
         },
+    )
+else:
+    # Windows/Linux: onefile mode
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        name='MeetingTranslator',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon='icon.ico' if os.path.exists('icon.ico') else None,
+        version=None,
     )

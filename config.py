@@ -12,6 +12,7 @@ DEFAULTS = {
     "always_on_top": False,
     "show_original": True,
     "auto_translate": True,
+    "context_terms": "",
 }
 
 SPEAKER_COLORS = {

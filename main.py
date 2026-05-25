@@ -24,11 +24,12 @@ from translator import translate
 # ── Signals (cross-thread → Qt main thread) ──────────────────────────────────
 
 class _Bridge(QObject):
-    segment_ready = pyqtSignal(int, str, str, str)  # speaker, color, original, translated
-    provisional   = pyqtSignal(int, str, str)        # speaker, color, text
-    status        = pyqtSignal(str, str)              # message, level
-    connected     = pyqtSignal()
-    disconnected  = pyqtSignal()
+    segment_ready  = pyqtSignal(int, str, str, str)  # speaker, color, original, translated
+    provisional    = pyqtSignal(int, str, str)        # speaker, color, text
+    status         = pyqtSignal(str, str)             # message, level
+    connected      = pyqtSignal()
+    disconnected   = pyqtSignal()
+    reconnecting   = pyqtSignal(int, int)             # attempt, max_attempts
 
 
 # ── Settings Dialog ──────────────────────────────────────────────────────────
@@ -98,6 +99,18 @@ class SettingsDialog(QDialog):
         audio_form.addRow("", note)
         layout.addWidget(audio_group)
 
+        # Context
+        ctx_group = QGroupBox("Context (Domain Terms)")
+        ctx_form = QFormLayout(ctx_group)
+        self.terms_edit = QLineEdit(self.cfg.get("context_terms", ""))
+        self.terms_edit.setPlaceholderText("e.g., Kubernetes, API gateway, sprint review")
+        ctx_form.addRow("Terms:", self.terms_edit)
+        ctx_note = QLabel("Comma-separated domain terms sent to Soniox to improve STT accuracy.")
+        ctx_note.setWordWrap(True)
+        ctx_note.setStyleSheet("color:#888;font-size:11px;")
+        ctx_form.addRow("", ctx_note)
+        layout.addWidget(ctx_group)
+
         # Display
         disp_group = QGroupBox("Display")
         disp_form = QFormLayout(disp_group)
@@ -132,6 +145,7 @@ class SettingsDialog(QDialog):
         self.cfg["audio_source"]    = self.audio_combo.currentData()
         self.cfg["always_on_top"]   = self.ontop_cb.isChecked()
         self.cfg["font_size"]       = self.font_spin.value()
+        self.cfg["context_terms"]   = self.terms_edit.text().strip()
         self.accept()
 
 
@@ -212,6 +226,7 @@ class MainWindow(QMainWindow):
         self._bridge.status.connect(self._set_status)
         self._bridge.connected.connect(self._on_connected)
         self._bridge.disconnected.connect(self._on_disconnected)
+        self._bridge.reconnecting.connect(self._on_reconnecting)
 
         self._audio: AudioCapture | None = None
         self._soniox: SonioxClient | None = None
@@ -431,7 +446,9 @@ class MainWindow(QMainWindow):
             on_error=lambda e: self._bridge.status.emit(f"Error: {e}", "error"),
             on_connected=lambda: self._bridge.connected.emit(),
             on_disconnected=lambda: self._bridge.disconnected.emit(),
+            on_reconnecting=lambda a, m: self._bridge.reconnecting.emit(a, m),
             enable_diarization=True,
+            context_terms=self.cfg.get("context_terms", ""),
         )
         self._soniox.connect()
         self._audio = AudioCapture(on_audio=self._soniox.send_audio, source=audio_src)
@@ -448,6 +465,8 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.audio_combo.setEnabled(True)
+        if self._session_log:
+            self._auto_save_session()
         self._set_status("Stopped", "ok")
         self.dot.setStyleSheet("color:#444; font-size:20px;")
 
@@ -608,6 +627,9 @@ class MainWindow(QMainWindow):
     def _on_connected(self):
         self._set_status("Live — listening", "ok")
 
+    def _on_reconnecting(self, attempt: int, max_attempts: int):
+        self._set_status(f"Reconnecting… ({attempt}/{max_attempts})", "warn")
+
     def _on_disconnected(self):
         if self._running:
             self._set_status("Disconnected", "error")
@@ -632,7 +654,7 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(text)
         self._set_status("Copied to clipboard", "ok")
 
-    def _save_session(self):
+    def _write_session_file(self) -> str:
         save_dir = os.path.join(os.path.expanduser("~"), ".translator_meeting", "sessions")
         os.makedirs(save_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -646,6 +668,17 @@ class MainWindow(QMainWindow):
             f.write(self.orig_edit.toPlainText())
             f.write("\n\n## Translation\n\n")
             f.write(self.trans_edit.toPlainText())
+        return path
+
+    def _auto_save_session(self):
+        try:
+            path = self._write_session_file()
+            print(f"[Session] Auto-saved → {path}")
+        except Exception as e:
+            print(f"[Session] Auto-save error: {e}")
+
+    def _save_session(self):
+        path = self._write_session_file()
         self._set_status(f"Saved → {path}", "ok")
         if platform.system() == "Windows":
             subprocess.Popen(f'explorer /select,"{path}"')
